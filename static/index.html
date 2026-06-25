@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель передачи фото ПК</title>
+    <style>
+        body { font-family: system-ui, sans-serif; text-align: center; margin-top: 50px; background: #eef2f3; color: #333; }
+        .container { max-width: 500px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        #progressContainer { margin-top: 25px; display: none; background: #f8f9fa; padding: 15px; border-radius: 6px; }
+        progress { width: 100%; height: 20px; border-radius: 10px; }
+        .btn { border: none; padding: 12px 20px; font-size: 14px; border-radius: 6px; cursor: pointer; font-weight: bold; margin: 10px 5px 0 5px; transition: 0.2s; }
+        .folder-btn { background: #007bff; color: white; }
+        .folder-btn:hover { background: #0069d9; }
+        .close-btn { background: #dc3545; color: white; }
+        .close-btn:hover { background: #bd2130; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Передача файлов с телефона</h1>
+        
+        <div id="workZone">
+            <h3>Сканируйте QR-код телефоном для подключения:</h3>
+            <img id="qrImg" src="" alt="Генерация QR-кода..." style="border: 1px solid #ddd; padding: 5px; border-radius: 4px; width: 256px; height: 256px;">
+            <p style="font-size: 12px; color: #888;">(Убедитесь, что VPN отключен, а устройства в одной Wi-Fi)</p>
+
+            <div id="progressContainer">
+                <h4 id="progressStatus" style="margin: 0 0 10px 0;">Ожидание подключения телефона...</h4>
+                <progress id="progressBar" value="0" max="100"></progress>
+                <p id="progressText" style="font-size: 14px; margin: 5px 0 5px 0; font-weight: bold;">0 / 0 файлов</p>
+                <p id="pcSpeed" style="font-size: 13px; color: #555; margin: 2px 0;">Текущая скорость: --</p>
+                <p id="pcEta" style="font-size: 13px; color: #555; margin: 2px 0;">Оставшееся время: --</p>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button id="openFolderBtn" class="btn folder-btn">📂 Открыть папку с файлами</button>
+            <button id="shutdownBtn" class="btn close-btn">❌ Закрыть программу</button>
+        </div>
+    </div>
+
+    <script>
+        const qrImg = document.getElementById('qrImg');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const progressStatus = document.getElementById('progressStatus');
+        const shutdownBtn = document.getElementById('shutdownBtn');
+        const openFolderBtn = document.getElementById('openFolderBtn');
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/api/info');
+                const data = await response.json();
+                qrImg.src = `/api/qr?url=${encodeURIComponent(data.url)}`;
+                setInterval(checkTransferStatus, 1000);
+            } catch (err) {
+                console.error("Ошибка инициализации:", err);
+            }
+        });
+
+        async function checkTransferStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const state = await response.json();
+
+                if (state.is_active || state.total_files > 0) {
+                    progressContainer.style.display = 'block';
+                    progressBar.max = state.total_files;
+                    progressBar.value = state.current_file_num;
+                    progressText.innerText = `${state.current_file_num} из ${state.total_files} файлов`;
+                    
+                    document.getElementById('pcSpeed').innerText = `Текущая скорость: ${state.current_speed || '--'}`;
+                    document.getElementById('pcEta').innerText = `Оставшееся время: ${state.time_left || '--'}`;
+
+                    if (state.current_file_num === state.total_files && state.total_files > 0) {
+                        progressStatus.innerText = "🎉 Все файлы успешно получены!";
+                        document.getElementById('pcSpeed').innerText = `Текущая скорость: 0 Мбайт/с`;
+                        document.getElementById('pcEta').innerText = `Оставшееся время: завершено`;
+                    } else {
+                        progressStatus.innerText = "⏳ Принимаются файлы с телефона...";
+                    }
+                }
+            } catch (e) {
+                console.error("Ошибка опроса статуса", e);
+            }
+        }
+
+        openFolderBtn.addEventListener('click', async () => {
+            try { await fetch('/api/open-folder'); } catch (e) { alert("Не удалось открыть папку."); }
+        });
+
+        shutdownBtn.addEventListener('click', async () => {
+            if (confirm("Вы действительно хотите закрыть программу и завершить соединение?")) {
+                try {
+                    await fetch('/api/shutdown');
+                    document.body.innerHTML = "<h2 style='margin-top:100px; color:#666;'>Программа успешно закрыта. Вы можете закрыть вкладку браузера.</h2>";
+                } catch (e) { alert("Программа уже закрыта."); }
+            }
+        });
+    </script>
+</body>
+</html>

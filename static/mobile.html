@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Отправка мультимедиа</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin: 30px 15px; background: #f9f9f9; color: #333; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        input[type="file"] { display: none; }
+        .file-label { background: #007bff; color: white; padding: 15px; display: block; border-radius: 5px; cursor: pointer; margin-bottom: 20px; font-weight: bold; }
+        button { background: #28a745; color: white; border: none; width: 100%; padding: 15px; font-size: 16px; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        button:disabled { background: #cccccc; cursor: not-allowed; }
+        #status { margin-top: 20px; font-weight: bold; color: #555; }
+        .metrics { margin-top: 15px; padding: 10px; background: #eee; border-radius: 6px; font-size: 14px; text-align: left; display: none; }
+        .metrics div { margin-bottom: 5px; }
+        progress { width: 100%; height: 15px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Передача медиафайлов на ПК</h2>
+        <p>Выберите фото или видео для отправки</p>
+        
+        <label for="fileInput" class="file-label">📸 Выбрать медиафайлы</label>
+        <input type="file" id="fileInput" accept="image/*,video/*" multiple>
+        
+        <button id="uploadBtn">🚀 Отправить на компьютер</button>
+        
+        <div id="status"></div>
+        
+        <div id="metricsBox" class="metrics">
+            <div id="metricSpeed">Скорость: 0 Мбайт/с</div>
+            <div id="metricEta">Осталось времени: -- сек</div>
+            <progress id="fileProgress" value="0" max="100"></progress>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const statusDiv = document.getElementById('status');
+        const metricsBox = document.getElementById('metricsBox');
+        const metricSpeed = document.getElementById('metricSpeed');
+        const metricEta = document.getElementById('metricEta');
+        const fileProgress = document.getElementById('fileProgress');
+        
+        let wakeLock = null;
+
+        async function requestWakeLock() {
+            try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+        }
+        function releaseWakeLock() {
+            if (wakeLock !== null) { wakeLock.release(); wakeLock = null; }
+        }
+
+        fileInput.addEventListener('change', () => {
+            statusDiv.innerText = `Выбрано элементов: ${fileInput.files.length}`;
+            metricsBox.style.display = 'none';
+        });
+
+        uploadBtn.addEventListener('click', async () => {
+            const files = fileInput.files;
+            if (files.length === 0) { alert('Пожалуйста, выберите файлы.'); return; }
+
+            uploadBtn.disabled = true;
+            statusDiv.innerText = "Инициализация передачи...";
+            await requestWakeLock();
+
+            try {
+                await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ count: files.length })
+                });
+
+                for (let i = 0; i < files.length; i++) {
+                    statusDiv.innerText = `Отправка файла ${i + 1} из ${files.length}...`;
+                    metricsBox.style.display = 'block';
+                    await uploadFileWithMetrics(files[i]);
+                }
+
+                statusDiv.innerText = "🎉 Все файлы успешно отправлены!";
+                metricsBox.style.display = 'none';
+                fileInput.value = ""; 
+            } catch (err) {
+                statusDiv.innerText = `🔴 Ошибка при передаче данных.`;
+                metricsBox.style.display = 'none';
+            } finally {
+                uploadBtn.disabled = false;
+                releaseWakeLock();
+            }
+        });
+
+        function uploadFileWithMetrics(file) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                const formData = new FormData();
+                formData.append('photo', file);
+
+                let startTime = Date.now();
+
+                xhr.upload.onprogress = function(event) {
+                    if (event.lengthComputable) {
+                        const loaded = event.loaded;
+                        const total = event.total;
+                        
+                        const percent = (loaded / total) * 100;
+                        fileProgress.value = percent;
+
+                        const durationSec = (Date.now() - startTime) / 1000;
+                        if (durationSec > 0.1) {
+                            const speedBytesPerSec = loaded / durationSec;
+                            const speedMbytesPerSec = speedBytesPerSec / (1024 * 1024);
+                            
+                            const speedText = `${speedMbytesPerSec.toFixed(1)} Мбайт/с`;
+                            let etaText = `${Math.round(etaSec = (total - loaded) / speedBytesPerSec)} сек`;
+                            if ((total - loaded) / speedBytesPerSec >= 60) {
+                                etaText = `${Math.floor(((total - loaded) / speedBytesPerSec) / 60)} мин ${Math.round(((total - loaded) / speedBytesPerSec) % 60)} сек`;
+                            }
+
+                            metricSpeed.innerText = `Скорость: ${speedText}`;
+                            metricEta.innerText = `Осталось времени: ${etaText}`;
+
+                            if (!window.lastTelemetry || Date.now() - window.lastTelemetry > 1000) {
+                                window.lastTelemetry = Date.now();
+                                fetch('/api/telemetry', {
+                                    method: 'POST',
+                                    body: JSON.stringify({ speed: speedText, eta: etaText })
+                                }).catch(()=>{});
+                            }
+                        }
+                    }
+                };
+
+                xhr.onload = function() {
+                    if (xhr.status === 200) resolve();
+                    else reject(new Error('Ошибка сервера'));
+                };
+                xhr.onerror = function() { reject(new Error('Сбой сети')); };
+
+                xhr.open('POST', '/api/upload', true);
+                xhr.send(formData);
+            });
+        }
+    </script>
+</body>
+</html>
